@@ -27,6 +27,8 @@ dev = [
   "ruff>=0.8.0",
 ]
 hf = [
+  "huggingface_hub>=0.34.0",
+  "safetensors>=0.5.0",
   "torchvision>=0.20.0",
   "transformers>=4.48.0",
 ]
@@ -39,6 +41,8 @@ vllm = [
 ]
 all = [
   "mcp>=1.26.0",
+  "huggingface_hub>=0.34.0",
+  "safetensors>=0.5.0",
   "torchvision>=0.20.0",
   "transformers>=4.48.0",
   "uvicorn>=0.34.0",

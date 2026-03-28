@@ -27,4 +27,5 @@ venv/
 .DS_Store
 .idea/
 .python-version
-
+.bench-assets/
+.deps/

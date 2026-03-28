@@ -138,6 +138,30 @@ Available tools:
 - `encode_images`
 - `benchmark`
 
+### 4. Use the Real Qwen2.5-VL Vision Tower
+
+```python
+import asyncio
+from pathlib import Path
+
+from vllm_chunked_vision import Qwen2_5_VLVisualBackend, VLLMChunkedVisionProxy, VisualInput
+
+backend = Qwen2_5_VLVisualBackend(
+    model_id="Qwen/Qwen2.5-VL-72B-Instruct",
+    cache_dir="/pub7/neel2/hf-cache",
+    device="cuda:0",
+)
+proxy = VLLMChunkedVisionProxy(backend=backend)
+
+messages = asyncio.run(
+    proxy.prepare_openai_messages(
+        "Compare all images and explain the strongest evidence.",
+        [VisualInput(identifier="frame0", source_path=Path("frame0.png"))],
+        prompt_token_reserve=2048,
+    )
+)
+```
+
 ## Benchmarking
 
 The repository ships with `benchmark_ttft.py`. It supports two modes:
@@ -160,12 +184,73 @@ python benchmark_ttft.py \
   --control-base-url http://127.0.0.1:8000/v1 \
   --experimental-base-url http://127.0.0.1:8100/v1 \
   --model Qwen/Qwen2.5-VL-72B-Instruct \
+  --experimental-input-mode image_embeds \
+  --experimental-backend qwen2.5-vl \
+  --cache-dir /pub7/neel2/hf-cache \
+  --device cuda:0 \
   --image-count 20
 ```
 
 The default remote benchmark generates twenty synthetic 1536x1536 images and
 measures streamed TTFT from each endpoint. It also samples CPU utilization and,
 when `nvidia-smi` is available, GPU utilization during prefill.
+
+Benchmark matrix:
+
+```bash
+python benchmark_suite.py \
+  --mode remote-openai \
+  --control-base-url http://127.0.0.1:8000/v1 \
+  --experimental-base-url http://127.0.0.1:8100/v1 \
+  --experimental-input-mode image_embeds \
+  --experimental-backend qwen2.5-vl \
+  --cache-dir /pub7/neel2/hf-cache \
+  --device cuda:0
+```
+
+Managed single-host benchmark on one 2x96 GB machine:
+
+```bash
+scripts/run_qwen_benchmark_matrix.sh
+```
+
+That wrapper uses `benchmark_deployment.py` to rotate the control and
+experimental TP=2 servers on the same GPUs instead of assuming two full 72B
+servers can stay resident at once.
+
+Real encoder-pipeline benchmark:
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+python benchmark_encoder_pipeline.py \
+  --model Qwen/Qwen2.5-VL-72B-Instruct \
+  --cache-dir /pub7/neel2/hf-cache \
+  --device cuda:0
+```
+
+Validated results from the real Qwen2.5-VL visual tower on this host:
+
+- `images-4-1024`: control TTFF `1792 ms`, experimental TTFF `1778 ms`, improvement `15 ms` (`0.8%`)
+- `images-10-1536`: control TTFF `10173 ms`, experimental TTFF `7472 ms`, improvement `2701 ms` (`26.6%`)
+- `images-20-1536`: control TTFF `19690 ms`, experimental TTFF `7081 ms`, improvement `12609 ms` (`64.0%`)
+
+Those numbers come from `.bench-assets/qwen_encoder_pipeline.json` and isolate the
+external Qwen vision tower itself: monolithic ingestion versus chunked,
+concurrent ingestion using the same model-correct embeddings.
+
+## Startup Notes
+
+On this Ubuntu 24.04 host, `vllm 0.12.0` tries to compile Triton launchers
+during multimodal startup but the base Python install does not ship
+`/usr/include/python3.12/Python.h`. The repository now ships two mitigations:
+
+- `scripts/ensure_python_headers.sh` downloads and extracts the `python3.12-dev`
+  headers into `.deps/` when the system headers are missing.
+- The `serve_qwen_*.sh` scripts default to `--enforce-eager` and
+  `-cc.mode=0`, which disables the failing compile path on minimal hosts.
+
+This keeps the benchmark and serving scripts reproducible without requiring
+root or a custom vLLM fork.
 
 ## Public Deployment Notes
 
@@ -175,6 +260,9 @@ in this shape:
 ```bash
 vllm serve Qwen/Qwen2.5-VL-72B-Instruct \
   --tensor-parallel-size 2 \
+  --max-model-len 65536 \
+  --enforce-eager \
+  -cc.mode=0 \
   --enable-mm-embeds \
   --limit-mm-per-prompt '{"image":0,"video":0}'
 ```
@@ -193,6 +281,8 @@ The library then becomes the request-side controller that:
 - A production deployment still needs a backend that emits embeddings matching
   the target VLM's expected vision projection format.
 - The remote benchmark compares endpoints, not internal vLLM scheduler traces.
+- The full TP=2 raw-image versus `image_embeds` API benchmark against the live
+  Qwen2.5-VL-72B server is scaffolded here but was not completed in this push.
 
 ## Development
 
@@ -200,4 +290,3 @@ The library then becomes the request-side controller that:
 pytest
 python benchmark_ttft.py --mode simulated --image-count 20
 ```
-

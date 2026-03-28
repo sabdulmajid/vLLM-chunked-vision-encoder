@@ -32,20 +32,23 @@ def serialize_payload(payload: dict[str, Any]) -> Any:
     return result
 
 
-def build_openai_image_embed_part(item: EncodedVisualItem) -> dict[str, Any]:
-    """Build one `image_embeds` content part for the OpenAI-compatible server."""
+def build_openai_image_embed_part(items: Sequence[EncodedVisualItem]) -> dict[str, Any]:
+    """Build one aggregated `image_embeds` part for the OpenAI-compatible server."""
 
-    serialized = serialize_payload(item.payload)
-    image_embeds: Any
-    if set(serialized) == {"image_embeds"}:
-        image_embeds = serialized["image_embeds"]
+    aggregated = aggregate_vllm_multi_modal_data(items).get("image")
+    if aggregated is None:
+        raise ValueError("No image embeddings were provided.")
+
+    if isinstance(aggregated, torch.Tensor):
+        image_embeds: Any = tensor_to_base64(aggregated)
+    elif isinstance(aggregated, dict):
+        image_embeds = serialize_payload(aggregated)
     else:
-        image_embeds = serialized
-    return {
-        "type": "image_embeds",
-        "image_embeds": image_embeds,
-        "uuid": item.identifier,
-    }
+        raise TypeError(
+            "OpenAI-compatible `image_embeds` requests must serialize to a tensor or dict payload."
+        )
+
+    return {"type": "image_embeds", "image_embeds": image_embeds}
 
 
 def aggregate_vllm_multi_modal_data(items: Sequence[EncodedVisualItem]) -> dict[str, Any]:
@@ -92,7 +95,7 @@ def build_openai_messages(prepared: PreparedPrompt) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
     if prepared.prompt:
         content.append({"type": "text", "text": prepared.prompt})
-    content.extend(build_openai_image_embed_part(item) for item in prepared.encoded_items)
+    if prepared.encoded_items:
+        content.append(build_openai_image_embed_part(prepared.encoded_items))
     messages.append({"role": "user", "content": content})
     return messages
-

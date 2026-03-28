@@ -1,7 +1,7 @@
 """Public package surface for the vLLM chunked vision encoder."""
 
 from .backends import CallableVisionEncoderBackend, DeterministicVisionBackend, VisionEncoderBackend
-from .benchmarking import run_benchmark
+from .benchmarking import measure_openai_run, run_benchmark
 from .budgeting import DynamicBudgetInterceptor
 from .config import BudgetOverrideConfig, ChunkedVisionConfig, MCPServerConfig, RuntimeConfig
 from .encoder import ChunkedVisionEncoder
@@ -22,6 +22,11 @@ from .types import (
     VisualKind,
 )
 
+try:  # Optional HF-heavy backend.
+    from .qwen2_5_vl_backend import Qwen2_5_VLVisualBackend
+except ImportError:  # pragma: no cover - exercised when HF extras are absent.
+    Qwen2_5_VLVisualBackend = None  # type: ignore[assignment]
+
 __all__ = [
     "BenchmarkComparison",
     "BenchmarkRun",
@@ -39,6 +44,7 @@ __all__ = [
     "MCPServerConfig",
     "MetricSnapshot",
     "PreparedPrompt",
+    "Qwen2_5_VLVisualBackend",
     "RuntimeConfig",
     "VLLMChunkedVisionProxy",
     "VisionEncoderBackend",
@@ -47,5 +53,6 @@ __all__ = [
     "VisualKind",
     "aggregate_vllm_multi_modal_data",
     "build_openai_messages",
+    "measure_openai_run",
     "run_benchmark",
 ]
